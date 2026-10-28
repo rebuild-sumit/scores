@@ -72,6 +72,12 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
 .bx th.sc{color:var(--accent)}
 .bx td.sc{background:color-mix(in srgb,var(--accent) 9%,var(--card))}
 .bx .tab{font-size:10px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-right:6px}
+/* reddit thread */
+.rt{display:flex;flex-direction:column;gap:2px;margin:0 0 10px;font-size:13px}
+.rt a{font-weight:600}.rt a:hover{color:var(--accent)}.rt span{color:var(--muted);font-size:12px}
+.cm{padding:9px 12px;border-bottom:1px solid var(--line);font-size:14px}.cm:last-child{border-bottom:0}
+.cm .ch{display:flex;gap:8px;font-size:12px;color:var(--muted);margin-bottom:2px}.cm .ch b{color:var(--fg);font-weight:600}
+.cm .cx{white-space:pre-wrap;overflow-wrap:anywhere}
 /* play-by-play */
 .pf{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin:0 0 10px}
 .pf a{padding:4px 10px;border-radius:999px;border:1px solid var(--line);background:var(--card);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer}
@@ -104,7 +110,7 @@ const $=s=>document.querySelector(s), app=$('#app');
 const esc=s=>String(s??'').replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const P=new URLSearchParams(location.search), L=P.get('l')||'nba';
 // Served by the local Claude Browser (proxied /api/*) or as a static site that reads ESPN's feeds directly.
-const LG={"nba": "basketball/nba", "nfl": "football/nfl", "nhl": "hockey/nhl", "mlb": "baseball/mlb", "wnba": "basketball/wnba", "ncaaf": "football/college-football", "ncaab": "basketball/mens-college-basketball"}, DIRECT=!['localhost','127.0.0.1'].includes(location.hostname), ESPN='https://site.api.espn.com/apis/site/v2/sports/';
+const LG={"nba": "basketball/nba", "nfl": "football/nfl", "nhl": "hockey/nhl", "mlb": "baseball/mlb", "wnba": "basketball/wnba", "ncaaf": "football/college-football", "ncaab": "basketball/mens-college-basketball"}, DIRECT=true, ESPN='https://site.api.espn.com/apis/site/v2/sports/';
 const isGame=location.pathname==='/game'||(DIRECT&&P.has('id'));
 const sbUrl=l=>(DIRECT?'./':'/scores')+'?l='+l, gameUrl=id=>(DIRECT?'./':'/game')+`?l=${L}&id=${id}`;
 function api(kind){
@@ -115,7 +121,9 @@ function api(kind){
   return `${ESPN}${lg}/scoreboard`+(q.length?'?'+q.join('&'):'');
 }
 let timer, team=0, view=P.get('v')==='adv'?'adv':'basic', sorts={}, BOX=[];
-let pane=P.get('t')==='plays'?'plays':'box', PBP={}, TEAMS={}, pf=0, scOnly=false, openD={};
+// Reddit thread comments need the local server (Reddit's RSS has no CORS), so the static site skips them.
+const HAS_THREAD=!DIRECT&&['nba','nfl','nhl','mlb','wnba','ncaaf','ncaab'].includes(L);
+let pane=['plays','thread'].includes(P.get('t'))?P.get('t'):'box', HASPLAYS=false, THREAD=null, PBP={}, TEAMS={}, pf=0, scOnly=false, openD={};
 if(DIRECT)$('.brand').href='./';
 document.querySelectorAll('#tabs a').forEach(a=>{a.classList.toggle('on',a.dataset.l===L);a.href=sbUrl(a.dataset.l)});
 const logo=t=>t.logo||(t.logos&&t.logos[0]&&t.logos[0].href)||'';
@@ -164,14 +172,14 @@ async function game(){
   team=Math.min(team,Math.max(0,tabs.length-1));
   TEAMS={};cs.forEach(t=>TEAMS[t.team.id]={ab:t.team.abbreviation,logo:logo(t.team)});
   PBP=playData(d);
-  const hasPlays=!!(PBP.drives||PBP.plays).length;
-  if(!BOX.length&&hasPlays)pane='plays';
+  const hasPlays=HASPLAYS=!!(PBP.drives||PBP.plays).length, anyTab=BOX.length||hasPlays||HAS_THREAD;
   app.innerHTML=`<a class="back" href="${sbUrl(L)}">‹ All games</a>${stamp()}<div class="hero"><div class="score">${side(a)}<div>${big}<div class="mid ${st==='in'?'live':''}">${esc(s.shortDetail||s.detail)}</div></div>${side(h)}</div>${ls}</div>`+
-    (BOX.length||hasPlays?`<div class="tt">${BOX.length?tabs.map(([i,n])=>`<a data-i="${i}">${esc(n)}</a>`).join(''):''}${hasPlays?'<a data-p="1">Plays</a>':''}`+
+    (anyTab?`<div class="tt">${BOX.length?tabs.map(([i,n])=>`<a data-i="${i}">${esc(n)}</a>`).join(''):''}${hasPlays?'<a data-p="1">Plays</a>':''}${HAS_THREAD?'<a data-r="1">Thread</a>':''}`+
       (hoops?`<span class="vw"><a data-v="basic" class="${view==='basic'?'on':''}">Basic</a><a data-v="adv" class="${view==='adv'?'on':''}">Advanced</a></span>`:'')+`</div><div id="bx"></div>`:
      `<div class="empty">Box score appears at tip-off.</div>`);
-  if(BOX.length||hasPlays){
+  if(anyTab){
     renderPane();
+    document.querySelectorAll('.tt a[data-r]').forEach(x=>x.onclick=()=>setPane('thread'));
     document.querySelectorAll('.tt a[data-i]').forEach(x=>x.onclick=()=>{team=+x.dataset.i;setPane('box')});
     document.querySelectorAll('.tt a[data-p]').forEach(x=>x.onclick=()=>setPane('plays'));
     document.querySelectorAll('.vw a').forEach(x=>x.onclick=()=>{view=x.dataset.v;document.querySelectorAll('.vw a').forEach(y=>y.classList.toggle('on',y===x));P.set('v',view);history.replaceState(null,'','?'+P);renderBox()});
@@ -183,13 +191,30 @@ async function game(){
   }
   schedule(st==='in',game);
 }
-function setPane(p){pane=p;if(p==='plays')P.set('t','plays');else P.delete('t');history.replaceState(null,'','?'+P);renderPane()}
+function setPane(p){pane=p;if(p==='box')P.delete('t');else P.set('t',p);history.replaceState(null,'','?'+P);renderPane()}
 function renderPane(){
-  if(!BOX.length)pane='plays';
+  if(!BOX.length&&pane==='box')pane=HASPLAYS?'plays':'thread';
   document.querySelectorAll('.tt a[data-i]').forEach(y=>y.classList.toggle('on',pane==='box'&&+y.dataset.i===team));
   document.querySelectorAll('.tt a[data-p]').forEach(y=>y.classList.toggle('on',pane==='plays'));
+  document.querySelectorAll('.tt a[data-r]').forEach(y=>y.classList.toggle('on',pane==='thread'));
   const vw=$('.vw');if(vw)vw.style.visibility=pane==='box'?'':'hidden';
-  pane==='plays'?renderPlays():renderBox();
+  pane==='plays'?renderPlays():pane==='thread'?renderThread():renderBox();
+}
+
+// ---- Reddit game thread: newest comments, relayed by the local server (~1 refresh/minute, Reddit's limit)
+const ago=t=>{const s=Math.max(0,(Date.now()-new Date(t))/1000);return s<60?'now':s<3600?Math.floor(s/60)+'m':Math.floor(s/3600)+'h'};
+function renderThread(){
+  if(THREAD)drawThread();else $('#bx').innerHTML='<div class="empty">Finding the game thread…</div>';
+  get(`/api/thread?l=${L}&id=${encodeURIComponent(P.get('id')||'')}`).then(d=>{THREAD=d;if(pane==='thread')drawThread()})
+    .catch(()=>{if(!THREAD)$('#bx').innerHTML='<div class="empty">Couldn\'t reach the local server.</div>'});
+}
+function drawThread(){
+  const d=THREAD, t=d.thread, cs=d.comments||[];
+  if(!t){$('#bx').innerHTML=`<div class="empty">${d.error?'Reddit is rate-limiting; trying again in a minute.':'No game thread found yet. Checking again every couple of minutes.'}</div>`;return}
+  const fa=d.fetched?ago(d.fetched*1000):'', note=d.fetched?`refreshed ${fa==='now'?'just now':fa+' ago'} · Reddit allows about one refresh a minute`:'loading comments; Reddit allows about one request a minute';
+  $('#bx').innerHTML=`<div class="rt"><a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.title)} ↗</a><span>${note}</span></div>`+
+    (cs.length?`<div class="pl">${cs.map(c=>`<div class="cm"><div class="ch"><b>${esc(c.a)}</b><span>${ago(c.t)}</span></div><div class="cx">${esc(c.x)}</div></div>`).join('')}</div>`:
+     '<div class="empty">No comments yet.</div>');
 }
 
 // ---- play-by-play: flat play list (NBA/NHL/MLB/…) or drives (football), newest first
