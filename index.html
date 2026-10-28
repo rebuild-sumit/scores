@@ -72,6 +72,7 @@ table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
 .bx th.sc{color:var(--accent)}
 .bx td.sc{background:color-mix(in srgb,var(--accent) 9%,var(--card))}
 .bx .tab{font-size:10px;font-weight:700;color:var(--muted);border:1px solid var(--line);border-radius:4px;padding:0 4px;margin-right:6px}
+.mnote{color:var(--muted);font-size:12px;margin:-8px 0 16px}
 /* reddit thread */
 .rt{display:flex;flex-direction:column;gap:2px;margin:0 0 10px;font-size:13px}
 .rt a{font-weight:600}.rt a:hover{color:var(--accent)}.rt span{color:var(--muted);font-size:12px}
@@ -167,6 +168,7 @@ async function game(){
   BOX=d.boxscore&&d.boxscore.players||[];
   const hoops=BOX.length===2&&BOX.every(b=>b.statistics.length&&isHoops(b.statistics[0]));
   if(!hoops)view='basic';
+  if(hoops)loadMetrics();
   const tabs=BOX.map((b,i)=>[i,b.team.shortDisplayName||b.team.displayName]);
   if(BOX.length===2)tabs.push([2,'Both']);
   team=Math.min(team,Math.max(0,tabs.length-1));
@@ -309,8 +311,8 @@ function drtg(p,T,O,Ps){
   const stopPct=sd(stops*O.MP,Ps*p.MP), tD=100*sd(O.PTS,Ps), perSc=sd(O.PTS,O.FG+(1-(1-sd(O.FT,O.FTA))**2)*O.FTA*0.4);
   return Ps?tD+0.2*(100*perSc*(1-stopPct)-tD):null;
 }
-const ADV=[['MIN','MP',0],['TS%','TS',3],['eFG%','EFG',3],['3PAr','PAr',3],['FTr','FTr',3],['ORB%','ORBp',1],['DRB%','DRBp',1],['TRB%','TRBp',1],['AST%','ASTp',1],['STL%','STLp',1],['BLK%','BLKp',1],['TOV%','TOVp',1],['USG%','USG',1],['ORtg','ORtg',0],['DRtg','DRtg',0],['GmSc','GmSc',1]];
-const fmt=(v,d)=>v==null||!isFinite(v)?'—':d===3?v.toFixed(3).replace(/^0\./,'.'):v.toFixed(d);
+const ADV=[['MIN','MP',0],['TS%','TS',3],['eFG%','EFG',3],['3PAr','PAr',3],['FTr','FTr',3],['AST%','ASTp',1],['STL%','STLp',1],['TOV%','TOVp',1],['USG%','USG',1],['ORtg','ORtg',0],['DRtg','DRtg',0],['GmSc','GmSc',1]];
+const fmt=(v,d)=>v==null||!isFinite(v)?'—':d==='s'?(v>0?'+':'')+v.toFixed(1):d===3?v.toFixed(3).replace(/^0\./,'.'):v.toFixed(d);
 function adv(p,T,O){
   const f=T.MP/5, Ps=poss(T,O), sh=p.FGA+0.44*p.FTA, r={MP:p.MP};
   r.TS=p.FGA||p.FTA?sd(p.PTS,2*sh):null; r.EFG=p.FGA?(p.FG+0.5*p.P3)/p.FGA:null; r.PAr=p.FGA?p.P3A/p.FGA:null; r.FTr=p.FGA?p.FTA/p.FGA:null;
@@ -326,17 +328,33 @@ function advTeam(T,O){const Ps=poss(T,O);return {MP:T.MP,TS:sd(T.PTS,2*(T.FGA+0.
   ORBp:pct(T.ORB,T.ORB+O.DRB),DRBp:pct(T.DRB,T.DRB+O.ORB),TRBp:pct(T.TRB,T.TRB+O.TRB),ASTp:pct(T.AST,T.FG),STLp:pct(T.STL,Ps),BLKp:pct(T.BLK,O.FGA-O.P3A),
   TOVp:pct(T.TOV,T.FGA+0.44*T.FTA+T.TOV),USG:100,ORtg:pct(T.PTS,Ps),DRtg:pct(O.PTS,Ps),GmSc:null}}
 
+// Season impact ratings (EPM/DARKO/LEBRON) from the local server; null = not asked yet, false = unavailable.
+let MET=null;
+const EXT=['EPM','DARKO','LEBRON'];
+const normName=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/-/g,' ').replace(/[^a-z ]/g,'')
+  .split(/\s+/).filter(w=>w&&!['jr','sr','ii','iii','iv'].includes(w)).join(' ');
+const extCols=()=>MET?EXT.filter(k=>MET.sources[k]&&MET.sources[k].n).map(k=>[k,k,'s']):[];
+const extVal=(nm,k)=>{const p=MET&&MET.players[normName(nm)];return p&&p[k]?p[k][0]:null};
+function loadMetrics(){
+  if(MET!==null||DIRECT||L!=='nba')return;
+  MET=false;get('/api/metrics').then(m=>{MET=m;if(pane==='box'&&view==='adv')renderBox()}).catch(()=>{});
+}
+function metNote(){
+  const cs=extCols();if(!cs.length||view!=='adv')return '';
+  return `<div class="mnote">${cs.map(([k])=>`${k} ${esc(MET.sources[k].asof)}`).join(' · ')}. Season ratings (points per 100 possessions vs average), not this game.</div>`;
+}
 function model(t,gi){
   const b=BOX[t], g=b.statistics[gi];
   if(!g||!g.athletes||!g.athletes.length)return null;
-  const rows=g.athletes.map(a=>{const at=a.athlete;return {starter:!!a.starter,dnp:a.didNotPlay||!(a.stats||[]).length,reason:a.reason||'DNP',raw:a.stats||[],
+  const rows=g.athletes.map(a=>{const at=a.athlete;return {starter:!!a.starter,dnp:a.didNotPlay||!(a.stats||[]).length,reason:a.reason||'DNP',raw:a.stats||[],nm:at.displayName,
     name:`<span class="jr">${esc(at.jersey||'')}</span>${team===2?`<span class="tab">${esc(b.team.abbreviation)}</span>`:''}${esc(at.shortName||at.displayName)}${at.position?`<span class="pos">${esc(at.position.abbreviation)}</span>`:''}`}});
   if(view==='adv'&&isHoops(g)){
     const og=BOX[1-t].statistics[0], T=teamLine(g), O=teamLine(og);
     T.oTRB=O.TRB;T.oORB=O.ORB;
-    rows.forEach(r=>{if(r.dnp)return;const a=adv(line(g.labels,r.raw),T,O);r.vals=ADV.map(c=>a[c[1]]);r.cells=ADV.map((c,i)=>fmt(r.vals[i],c[2]))});
+    const cols=ADV.concat(extCols());
+    rows.forEach(r=>{if(r.dnp)return;const a=adv(line(g.labels,r.raw),T,O);r.vals=cols.map(c=>EXT.includes(c[1])?extVal(r.nm,c[1]):a[c[1]]);r.cells=cols.map((c,i)=>fmt(r.vals[i],c[2]))});
     const ta=advTeam(T,O);
-    return {title:g.name,labels:ADV.map(c=>c[0]),rows,totals:ADV.map(c=>fmt(ta[c[1]],c[1].endsWith('tg')?1:c[2]))};
+    return {title:g.name,labels:cols.map(c=>c[0]),rows,totals:cols.map(c=>EXT.includes(c[1])?'':fmt(ta[c[1]],c[1].endsWith('tg')?1:c[2]))};
   }
   rows.forEach(r=>{if(!r.dnp){r.cells=r.raw.map(String);r.vals=r.raw.map(num)}});
   return {title:team===2?g.name:(g.text||g.name),labels:g.labels||[],rows,totals:g.totals&&g.totals.some(x=>x)?g.totals:null};
@@ -348,7 +366,7 @@ function renderBox(){
     if(!ms.length)return '';
     const m=ms.length>1?{title:ms[0].title,labels:ms[0].labels,rows:ms.flatMap(x=>x.rows),totals:null,both:true}:ms[0];
     return table(m,view+(team===2?'b':'t')+gi,first.length>1);
-  }).join('');
+  }).join('')+metNote();
 }
 function table(m,k,titled){
   const lab=m.labels, n=lab.length, pi=lab.indexOf('PTS'), pm=lab.indexOf('+/-');
