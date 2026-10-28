@@ -289,6 +289,7 @@ function line(lab,arr){
   const get=l=>(arr||[])[lab.indexOf(l)]||'', ma=l=>get(l).split('-').map(x=>+x||0), o={};
   [o.FG,o.FGA]=ma('FG');[o.P3,o.P3A]=ma('3PT');[o.FT,o.FTA]=ma('FT');
   for(const [k,l] of [['MP','MIN'],['PTS','PTS'],['ORB','OREB'],['DRB','DREB'],['TRB','REB'],['AST','AST'],['STL','STL'],['BLK','BLK'],['TOV','TO'],['PF','PF']])o[k]=+get(l)||0;
+  o.PM=parseFloat(String(get('+/-')).replace('+',''))||0;
   return o;
 }
 function teamLine(g){const T=line(g.labels,g.totals);T.MP=g.athletes.reduce((s,a)=>s+line(g.labels,a.stats).MP,0);return T}
@@ -322,17 +323,29 @@ function adv(p,T,O){
   r.ASTp=pct(p.AST,(p.MP/f)*T.FG-p.FG); r.STLp=pct(p.STL*f,p.MP*Ps); r.BLKp=pct(p.BLK*f,p.MP*(O.FGA-O.P3A));
   r.TOVp=pct(p.TOV,sh+p.TOV); r.USG=pct((sh+p.TOV)*f,p.MP*(T.FGA+0.44*T.FTA+T.TOV));
   r.ORtg=ortg(p,T); r.DRtg=drtg(p,T,O,Ps);
+  if(p.MP>=GAME_MIN_MP){  // below ~10 min a single game is mostly noise
+    const pp=Ps*p.MP/f, per=v=>100*v/pp;
+    r.GIMP=GIMP_W.c+[p.PTS,p.FGA-p.P3A,p.P3A,p.FTA,p.AST,p.TOV,p.ORB,p.DRB,p.STL,p.BLK].reduce((s,v,i)=>s+GIMP_W.w[i]*per(v),0);
+    r.ON=per(p.PM);
+  }
   return r;
 }
 function advTeam(T,O){const Ps=poss(T,O);return {MP:T.MP,TS:sd(T.PTS,2*(T.FGA+0.44*T.FTA)),EFG:sd(T.FG+0.5*T.P3,T.FGA),PAr:sd(T.P3A,T.FGA),FTr:sd(T.FTA,T.FGA),
   ORBp:pct(T.ORB,T.ORB+O.DRB),DRBp:pct(T.DRB,T.DRB+O.ORB),TRBp:pct(T.TRB,T.TRB+O.TRB),ASTp:pct(T.AST,T.FG),STLp:pct(T.STL,Ps),BLKp:pct(T.BLK,O.FGA-O.P3A),
-  TOVp:pct(T.TOV,T.FGA+0.44*T.FTA+T.TOV),USG:100,ORtg:pct(T.PTS,Ps),DRtg:pct(O.PTS,Ps),GmSc:null}}
+  TOVp:pct(T.TOV,T.FGA+0.44*T.FTA+T.TOV),USG:100,ORtg:pct(T.PTS,Ps),DRtg:pct(O.PTS,Ps),GmSc:null,ON:pct(T.PTS-O.PTS,Ps)}}
 
 // Season impact ratings (EPM/DARKO/LEBRON) from the local server; null = not asked yet, false = unavailable.
 let MET=null;
 const EXT=['EPM','DARKO','LEBRON'];
 const normName=s=>String(s||'').normalize('NFKD').replace(/[\u0300-\u036f]/g,'').toLowerCase().replace(/-/g,' ').replace(/[^a-z ]/g,'')
   .split(/\s+/).filter(w=>w&&!['jr','sr','ii','iii','iv'].includes(w)).join(' ');
+// Game Impact: our own single-game estimate of the box-score half of EPM/DARKO/LEBRON. A weighted
+// least-squares fit (minutes-weighted) of each player's average of the three season ratings on his
+// per-100 box line, 524 players, 2026-27 data as of 10-27 (5-fold CV R² 0.76). Frozen here so it
+// works with no outside source; refit once a season. Inputs per 100 possessions:
+// PTS, 2PA, 3PA, FTA, AST, TOV, ORB, DRB, STL, BLK.
+const GIMP_W={w:[0.677,-0.6102,-0.4357,-0.1556,0.468,-0.9189,0.2009,0.1846,1.22,0.4731],c:-8.8749}, GAME_MIN_MP=10;
+const GAME=[['gIMP','GIMP','s'],['ON/100','ON','s']];
 const extCols=()=>MET?EXT.filter(k=>MET.sources[k]&&MET.sources[k].n).map(k=>[k,k,'s']):[];
 const extVal=(nm,k)=>{const p=MET&&MET.players[normName(nm)];return p&&p[k]?p[k][0]:null};
 function loadMetrics(){
@@ -340,8 +353,9 @@ function loadMetrics(){
   MET=false;get('/api/metrics').then(m=>{MET=m;if(pane==='box'&&view==='adv')renderBox()}).catch(()=>{});
 }
 function metNote(){
-  const cs=extCols();if(!cs.length||view!=='adv')return '';
-  return `<div class="mnote">${cs.map(([k])=>`${k} ${esc(MET.sources[k].asof)}`).join(' · ')}. Season ratings (points per 100 possessions vs average), not this game.</div>`;
+  if(view!=='adv')return '';
+  const cs=extCols(), season=cs.length?`${cs.map(([k])=>`${k} ${esc(MET.sources[k].asof)}`).join(' · ')}: season ratings, not this game. `:'';
+  return `<div class="mnote">${season}gIMP: this game's box line run through a fit of those ratings. ON/100: team point margin per 100 possessions with him on the floor. Both per 100 possessions, ${GAME_MIN_MP}+ minutes only; single games are noisy.</div>`;
 }
 function model(t,gi){
   const b=BOX[t], g=b.statistics[gi];
@@ -351,10 +365,10 @@ function model(t,gi){
   if(view==='adv'&&isHoops(g)){
     const og=BOX[1-t].statistics[0], T=teamLine(g), O=teamLine(og);
     T.oTRB=O.TRB;T.oORB=O.ORB;
-    const cols=ADV.concat(extCols());
+    const cols=ADV.concat(extCols(),GAME);
     rows.forEach(r=>{if(r.dnp)return;const a=adv(line(g.labels,r.raw),T,O);r.vals=cols.map(c=>EXT.includes(c[1])?extVal(r.nm,c[1]):a[c[1]]);r.cells=cols.map((c,i)=>fmt(r.vals[i],c[2]))});
     const ta=advTeam(T,O);
-    return {title:g.name,labels:cols.map(c=>c[0]),rows,totals:cols.map(c=>EXT.includes(c[1])?'':fmt(ta[c[1]],c[1].endsWith('tg')?1:c[2]))};
+    return {title:g.name,labels:cols.map(c=>c[0]),rows,totals:cols.map(c=>EXT.includes(c[1])||c[1]==='GIMP'?'':fmt(ta[c[1]],c[1].endsWith('tg')?1:c[2]))};
   }
   rows.forEach(r=>{if(!r.dnp){r.cells=r.raw.map(String);r.vals=r.raw.map(num)}});
   return {title:team===2?g.name:(g.text||g.name),labels:g.labels||[],rows,totals:g.totals&&g.totals.some(x=>x)?g.totals:null};
