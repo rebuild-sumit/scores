@@ -122,8 +122,9 @@ function api(kind){
   return `${ESPN}${lg}/scoreboard`+(q.length?'?'+q.join('&'):'');
 }
 let timer, team=0, view=P.get('v')==='adv'?'adv':'basic', sorts={}, BOX=[];
-// Reddit thread comments need the local server (Reddit's RSS has no CORS), so the static site skips them.
-const HAS_THREAD=!DIRECT&&['nba','nfl','nhl','mlb','wnba','ncaaf','ncaab'].includes(L);
+// Reddit thread comments come from the Mac (Reddit's RSS has no CORS); the static site reaches it over Tailscale.
+const RELAY="https://sumits-macbook-pro.tailb83894.ts.net:8443";
+const HAS_THREAD=['nba','nfl','nhl','mlb','wnba','ncaaf','ncaab'].includes(L);
 let pane=['plays','thread'].includes(P.get('t'))?P.get('t'):'box', HASPLAYS=false, THREAD=null, PBP={}, TEAMS={}, pf=0, scOnly=false, openD={};
 if(DIRECT)$('.brand').href='./';
 document.querySelectorAll('#tabs a').forEach(a=>{a.classList.toggle('on',a.dataset.l===L);a.href=sbUrl(a.dataset.l)});
@@ -207,8 +208,8 @@ function renderPane(){
 const ago=t=>{const s=Math.max(0,(Date.now()-new Date(t))/1000);return s<60?'now':s<3600?Math.floor(s/60)+'m':Math.floor(s/3600)+'h'};
 function renderThread(){
   if(THREAD)drawThread();else $('#bx').innerHTML='<div class="empty">Finding the game thread…</div>';
-  get(`/api/thread?l=${L}&id=${encodeURIComponent(P.get('id')||'')}`).then(d=>{THREAD=d;if(pane==='thread')drawThread()})
-    .catch(()=>{if(!THREAD)$('#bx').innerHTML='<div class="empty">Couldn\'t reach the local server.</div>'});
+  get(`${RELAY}/api/thread?l=${L}&id=${encodeURIComponent(P.get('id')||'')}`).then(d=>{THREAD=d;if(pane==='thread')drawThread()})
+    .catch(()=>{if(!THREAD)$('#bx').innerHTML=`<div class="empty">${DIRECT?'The thread relays through your Mac: turn on Tailscale (and make sure the Mac is awake).':'Couldn\'t reach the local server.'}</div>`});
 }
 function drawThread(){
   const d=THREAD, t=d.thread, cs=d.comments||[];
